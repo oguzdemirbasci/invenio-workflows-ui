@@ -50,6 +50,8 @@ from flask_login import current_user
 from six import text_type
 
 from invenio_workflows.errors import WorkflowsMissingObject
+from inspire_schemas.utils import get_validation_errors as _get_validation_errors
+from jsonschema.exceptions import ValidationError
 
 from ..search import default_search_factory
 from ..tasks import resolve_actions
@@ -317,10 +319,17 @@ class WorkflowObjectResource(ContentNegotiatedMethodView):
         :param workflow_ui_object: workflow_api_class object.
         :returns: The modified record.
         """
-        data = request.get_json()
-        if data:
+        current_app.logger.info('##################### Modified repo being used.')
+        obj = request.get_json()
+        
+        try:
+            validate(obj.data, schema)
+        except ValidationError:
+            obj.extra_data['validation_errors'] = self.get_validation_errors(obj.data, schema)
+
+        if obj:
             workflow_ui_object.clear()
-            workflow_ui_object.update(data)
+            workflow_ui_object.update(obj)
             workflow_ui_object.commit()
             db.session.commit()
 
@@ -341,6 +350,23 @@ class WorkflowObjectResource(ContentNegotiatedMethodView):
             current_app.logger.exception('Failed to delete workflow object.')
             abort(500)
         return '', 204
+
+    def get_validation_errors(data, schema):
+        """Creates a ``validation_errors`` dictionary.
+        Args:
+            data (dict): the object to validate.
+            schema (str): the name of the schema.
+        Returns:
+            dict: ``validation_errors`` formatted dict.
+        """
+        errors = _get_validation_errors(data, schema=schema)
+        error_messages = [
+            {
+                'path': map(text_type, error.absolute_path),
+                'message': text_type(error.message),
+            } for error in errors
+        ]
+        return error_messages
 
 
 class WorkflowActionResource(ContentNegotiatedMethodView):
